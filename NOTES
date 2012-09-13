@@ -1,0 +1,56 @@
+The EDI service URL is /PharosEdi/EdiService.asmx
+The server is pharos-prod (or pharos-dev)
+pharos-prod enforces SSL.
+
+Typical session:
+
+1) Call InitializeSession2(site_code=site password).  Receive a
+session_id, as well as some date/TZ info 
+
+--- From this point on, the session_id is passed in the SOAP headers
+
+2) Call GetProductVersion().  Probably not needed, but some Omegas may
+enforce a minimum version.   Receive the version info in XML.
+
+3) Call GetPharosStatation2(terminal_type="", terminal_name=name of
+terminal).  The name of terminal is what Pharos thinks it is, and is (I
+think) unrelated to the actual hostname.  Get a ton of XML back,
+including what hardware type Pharos thinks it is, what features are
+enable, etc.  As well as the config, which is apparently unused?
+
+4) Call ConfigureSession3 with the terminal name and and empty charging
+model (presumably this means "use the default charging model")
+
+5) Call GetPharosStations2 again (no idea why omega does this.  not needed)
+
+-- The following is done each time.  The previous steps are only done on
+   firstboot?
+
+6) Call Ping() to ensure connection to EDI
+
+7) Call LoginUser with Track 2 card data (including sentinels) and a
+null password.  NOTE: The configdata from GetPharosStations2 says to
+call LoginUser2?   Get back an access level and "refer_id" which is the
+actual Kerberos username.  This step can be skipped if you have a username.
+
+8) Call GetUserPermissions for username and device name.  Get back XML,
+including what the user is allowed to do.
+
+9) Call GetUserDetails3 with username, lock_user=1, and transactiontype of 1)
+
+10) Get back all sorts of info.  purses is XML encoded
+
+11) Call ListPrintJobsForStation(print server, omega name, user name).
+Get back jobs in XML.  Each job contains job_id, jobname, username,
+queue, when_submitted, protected
+
+12) Call GetPrintJobDetails for each job (server, queue, job_id,
+user_id).  Get page count, etc)
+
+13) Call ReleaseAndRecordPrintJob3(a UUID, server, queue, job_id,
+print_station, user_id, code=null, password=null).  The last two are
+used for protected jobs, I believe.
+
+14) Call UnlockUser.  Failure to do this will leave the user "locked" on
+that terminal so they can't release elsewhere.   Unlocking an already
+unlocked user is a noop, not an exception.
