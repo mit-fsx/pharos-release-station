@@ -141,6 +141,17 @@ class Omega:
         except WebFault as e:
             raise PharosEDIException(e)
         # TODO: Ping?
+
+    def connected(self):
+        try:
+            self.soapClient.service.Ping()
+            return True
+        except WebFault as e:
+            if e.fault.faultstring == "The session is not running.":
+                return False
+            else:
+                raise PharosEDIException(e)
+
     
     def get_version(self):
         try:
