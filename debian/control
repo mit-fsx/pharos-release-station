@@ -11,6 +11,7 @@ Depends: gir1.2-gtk-3.0, gir1.2-glib-2.0,
 	 python, python-gobject, 
 	 python-pam,
 	 python-omega,
+	 python-magtek,
 	 zenity,
 	 ${misc:Depends}, ${python:Depends}
 Description: Pharos Release Station

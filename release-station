@@ -29,10 +29,8 @@ import auth_krb5
 
 UI_FILE="/usr/share/pharos-release-station/release-station.ui"
 CONFIG_FILE="/etc/pharos-release-station/config.ini"
-CONFIG_DEFAULTS={"site_password": "[redacted]",
-                 "omega_name": "wired-omega",
-                 "edi_server": "pharos-prod.mit.edu",
-                 }
+CONFIG_DEFAULTS = { "edi_use_ssl": "true",
+                  }
 
 class ReleaseStation:
     logger = logging.getLogger('ReleaseStation')
@@ -78,7 +76,8 @@ class ReleaseStation:
             
         # Omega connection
         try:
-            self.omega = omega.Omega(config.get('ReleaseStation', 'edi_server'))
+            self.omega = omega.Omega(config.get('ReleaseStation', 'edi_server'), 
+                                     config.getboolean('ReleaseStation', 'edi_use_ssl'))
             self.omega.start_session(config.get('ReleaseStation', 'omega_name'), config.get('ReleaseStation', 'site_password'))
         except omega.OmegaException as e:
             self._errDialog("An error occurred while starting up: %s" % e.message, False)
@@ -326,6 +325,9 @@ if __name__ == '__main__':
     logging.basicConfig(level=logging.FATAL)
     if options.debug:
         logging.getLogger('ReleaseStation').setLevel(logging.DEBUG)
+    if not os.path.isfile(options.config_file):
+        print >>sys.stderr, "Config file %s not found" % options.config_file
+        sys.exit(1)
     config = ConfigParser.RawConfigParser(CONFIG_DEFAULTS)
     config.readfp(io.BytesIO("[ReleaseStation]\n"))
     config.read(options.config_file)
