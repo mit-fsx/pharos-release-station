@@ -8,6 +8,7 @@ from gi.repository import Gtk
 from gi.repository import Gdk
 
 import sys
+import traceback
 import time
 import socket
 import os.path
@@ -164,18 +165,6 @@ class ReleaseStation:
         else:
             self._errDialog("Error: ", False)
        
-    def authenticateUserWithKerberos(self, username, password):
-        rc=0
-        try:
-            rc=kpass(username, password,
-                     self.config.get('ReleaseStation', 'kpass_service'), 
-                     socket.getfqdn().lower(),
-                     'FILE:' + self.config.get('ReleaseStation', 'kpass_keytab')
-                     )
-        except KpassError as diag:
-            self._errDialog("Kerberos Error: " + diag.message, False)
-        return (rc == 1)
-
     # TODO: locking?  Handle if locked on another terminal
     def cbLogin(self, widget):
         self.logger.debug("In login callback")
@@ -184,12 +173,13 @@ class ReleaseStation:
         if len(uname) < 1 or len(password) < 1:
             self._errDialog("Both a username and password are required", False)
             return
-        if self.authenticateUserWithKerberos(uname, password):
+        krbauth = auth_krb5.Authenticator('pharos-release-station')
+        if krbauth.authenticate(uname, password):
             self.logger.debug("Got username: %s", uname)
             if uname:
                 self.displayJobList(uname)
         else:
-            self._errDialog("Kerberos Password Incorrect", False)
+            self._errDialog("Error: %s" % krbauth.error, False)
 
     def _errDialog(self, message, verbose=True):
         msg = message
@@ -299,6 +289,17 @@ class ReleaseStation:
         self.displayJobList(self.username)
 
 
+    def _excepthook(type, value, traceback):
+        print >>sys.stderr, "Unhandled exception:\n%s\n" % ''.join(traceback.format_exception(type, value, traceback))
+        dlg = Gtk.MessageDialog(self.winMain,
+                                Gtk.DialogFlags.DESTROY_WITH_PARENT,
+                                Gtk.MessageType.ERROR,
+                                Gtk.ButtonsType.CLOSE,
+                                "An unhandled exception occurred.  Consult the logs for more details.\nThe program will now quit.\n")
+        dlg.run()
+        dlg.destroy()
+        sys.exit(1)
+
 if __name__ == '__main__':
     parser = OptionParser()
     parser.set_defaults(debug=False)
@@ -316,12 +317,12 @@ if __name__ == '__main__':
     config.read(options.config_file)
     Gtk.init(None);
     main_loop = GObject.MainLoop ()
-    alpha = ReleaseStation(options, config)
-#    GObject.timeout_add(30, dagreeter.updateTime)
     try:
+        alpha = ReleaseStation(options, config)
+        sys.excepthook = alpha._excepthook
         main_loop.run ()
     except KeyboardInterrupt:
         # TODO, don't quit
         main_loop.quit()
-    except Exception:
-        print >> sys.stderr, "oops"
+    except Exception as e:
+        print >> sys.stderr, "Unexpected error while starting application", e.message
