@@ -47,6 +47,7 @@
             <property name="visible">True</property>
             <property name="can_focus">False</property>
             <property name="orientation">vertical</property>
+            <signal name="key-press-event" handler="kpEvent" swapped="no"/>
             <child>
               <object class="GtkProgressBar" id="loginProgress">
                 <property name="can_focus">False</property>
@@ -112,6 +113,7 @@
                     <property name="visible">True</property>
                     <property name="can_focus">True</property>
                     <property name="invisible_char">●</property>
+                    <signal name="activate" handler="cb_user_activate" swapped="no"/>
                   </object>
                   <packing>
                     <property name="left_attach">1</property>

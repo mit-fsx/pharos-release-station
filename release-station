@@ -48,7 +48,9 @@ class ReleaseStation:
         
         # Gtk signal handlers
         handlers = {
+            "kpEvent": self.cbKeyPress,
             "cb_login": self.cbLogin, 
+            "cb_user_activate": self.cbUserActivate,
             "cb_exit": self.cbExit,
             "cb_swipe": self.cbSwipe,
             "cb_print": self.cbPrint,
@@ -89,6 +91,12 @@ class ReleaseStation:
             self.builder.get_object("btnSwipe").set_label("(card reader unavailable)")
         self.builder.get_object("treeviewPrintJobs").get_selection().connect("changed", self._selectionChanged)
 
+    def cbKeyPress(self, widget, event):
+        if event.keyval == Gdk.KEY_Escape:
+            self.builder.get_object("tfUsername").set_text('')
+            self.builder.get_object("tfPassword").set_text('')
+            self.builder.get_object("tfUsername").grab_focus()
+
     def cbExit(self, widget):
         self.jobListStore.clear()
         self.builder.get_object("queueLbl").set_text("(please wait)")
@@ -103,6 +111,7 @@ class ReleaseStation:
         self.builder.get_object("tfUsername").set_text("")
         self.builder.get_object("tfPassword").set_text("")
         self.builder.get_object("nbMain").set_current_page(0)
+        self.builder.get_object("tfUsername").grab_focus()
         
 
     def _toggleJobButtons(self, state):
@@ -165,13 +174,18 @@ class ReleaseStation:
         else:
             self._errDialog("Error: ", False)
        
+
+    def cbUserActivate(self, widget):
+        # Move focus to password field if user hits "Enter"
+        if len(widget.get_text()) > 0:
+            self.builder.get_object("tfPassword").grab_focus()
+
     # TODO: locking?  Handle if locked on another terminal
     def cbLogin(self, widget):
         self.logger.debug("In login callback")
         uname = self.builder.get_object("tfUsername").get_text()
         password = self.builder.get_object("tfPassword").get_text()
         if len(uname) < 1 or len(password) < 1:
-            self._errDialog("Both a username and password are required", False)
             return
         krbauth = auth_krb5.Authenticator('pharos-release-station')
         if krbauth.authenticate(uname, password):
