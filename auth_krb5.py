@@ -1,5 +1,6 @@
 import PAM
 import sys
+import os.path
 import logging
 
 # This module uses logging.  To enable it, do something like this in the 
@@ -15,6 +16,8 @@ class Authenticator():
 
     def __init__(self, pam_service='python-auth_krb5'):
         self.pam = PAM.pam()
+        if not os.path.exists("/etc/pam.d/" + pam_service):
+            logger.warn("%s might not be a valid pam service!", pam_service)
         self.pam_service = pam_service
         self.debugPrintPassword = False
         self.error = ''
