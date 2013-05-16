@@ -1,0 +1,13 @@
+Source: python-omega
+Section: python
+Priority: extra
+Maintainer: Jonathan Reed <jdreed@mit.edu>
+Build-Depends: debhelper (>= 7.0.50~), python-support
+Standards-Version: 3.9.3
+
+Package: python-omega
+Architecture: all
+Depends: ${misc:Depends}, ${python:Depends}, python-suds
+Provides: ${python:Provides}
+Description: Python module for Omega
+ Python module for Omegas

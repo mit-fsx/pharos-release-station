@@ -1,0 +1,11 @@
+python-omega (1.1) unstable; urgency=low
+
+  * Packaging fixes
+
+ -- Jonathan Reed <jdreed@mit.edu>  Thu, 16 May 2013 10:42:57 -0400
+
+python-omega (1.0) unstable; urgency=low
+
+  * Initial release.
+
+ -- Jonathan Reed <jdreed@mit.edu>  Wed, 15 May 2013 13:15:43 -0400
