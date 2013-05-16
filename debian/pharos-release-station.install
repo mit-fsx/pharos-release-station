@@ -1,4 +1,5 @@
-pharos-release-station usr/bin
+release-station usr/lib/pharos-release-station
+release-station-session usr/lib/pharos-release-station
 release-station.ui usr/share/pharos-release-station
 pharos-release-station.desktop usr/share/xsessions
 auth_krb5.py usr/share/pharos-release-station/modules
