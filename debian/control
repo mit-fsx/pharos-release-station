@@ -8,13 +8,9 @@ Standards-Version: 3.9.3
 Package: pharos-release-station
 Architecture: all
 Depends: gir1.2-gtk-3.0, gir1.2-glib-2.0, 
-	 python, python-gobject, ${misc:Depends}, ${python:Depends}
+	 python, python-gobject, 
+	 python-pam,
+	 python-omega,
+	 ${misc:Depends}, ${python:Depends}
 Description: Pharos Release Station
  A pharos release station
-
-Package: python-omega
-Architecture: all
-Depends: ${misc:Depends}, ${python:Depends}
-Provides: ${python:Provides}
-Description: Python module for Omega
- Python module for Omegas

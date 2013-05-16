@@ -1,0 +1,1 @@
+auth required pam_krb5.so keytab=/etc/pharos-release-station/keytab no_ccache ignore_k5login fail_pwchange
