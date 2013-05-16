@@ -48,8 +48,10 @@ class ReleaseStation:
         handlers = {
             "kpEvent": self.cbKeyPress,
             "cb_login": self.cbLogin, 
+            "cb_toggle_tabs": self.cbToggleTabs, 
             "cb_user_activate": self.cbUserActivate,
             "cb_exit": self.cbExit,
+            "cb_exit_app": self.cbExitApp,
             "cb_swipe": self.cbSwipe,
             "cb_print": self.cbPrint,
             "cb_printall": self.cbPrintAll,
@@ -91,10 +93,25 @@ class ReleaseStation:
         self.builder.get_object("treeviewPrintJobs").get_selection().connect("changed", self._selectionChanged)
 
     def cbKeyPress(self, widget, event):
-        if event.keyval == Gdk.KEY_Escape:
+        if widget is self.builder.get_object("winMain"):
+            if event.keyval == Gdk.KEY_F12:
+                self.builder.get_object("adminBox").set_visible(True)
+        elif event.keyval == Gdk.KEY_Escape:
             self.builder.get_object("tfUsername").set_text('')
             self.builder.get_object("tfPassword").set_text('')
             self.builder.get_object("tfUsername").grab_focus()
+
+    def cbExitApp(self, widget):
+        Gtk.main_quit()
+
+    def cbToggleTabs(self, widget):
+        nb = self.builder.get_object("nbMain")
+        if nb.get_show_tabs():
+            nb.set_show_tabs(False)
+            widget.set_label("Show Tabs")
+        else:
+            nb.set_show_tabs(True)
+            widget.set_label("Hide Tabs")
 
     def cbExit(self, widget):
         self.jobListStore.clear()
@@ -302,8 +319,8 @@ class ReleaseStation:
         self.displayJobList(self.username)
 
 
-    def _excepthook(type, value, traceback):
-        print >>sys.stderr, "Unhandled exception:\n%s\n" % ''.join(traceback.format_exception(type, value, traceback))
+    def _excepthook(self, type, value, tb):
+        print >>sys.stderr, "Unhandled exception:\n%s\n" % ''.join(traceback.format_exception(type, value, tb))
         dlg = Gtk.MessageDialog(self.winMain,
                                 Gtk.DialogFlags.DESTROY_WITH_PARENT,
                                 Gtk.MessageType.ERROR,
@@ -331,14 +348,16 @@ if __name__ == '__main__':
     config = ConfigParser.RawConfigParser(CONFIG_DEFAULTS)
     config.readfp(io.BytesIO("[ReleaseStation]\n"))
     config.read(options.config_file)
-    Gtk.init(None);
-    main_loop = GObject.MainLoop ()
+    Gtk.init(None)
+#    main_loop = GObject.MainLoop ()
     try:
         alpha = ReleaseStation(options, config)
         sys.excepthook = alpha._excepthook
-        main_loop.run ()
+        Gtk.main()
+#        main_loop.run ()
     except KeyboardInterrupt:
         # TODO, don't quit
-        main_loop.quit()
+        Gtk.main_quit()
+#        main_loop.quit()
     except Exception as e:
         print >> sys.stderr, "Unexpected error while starting application", e.message
