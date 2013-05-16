@@ -9,6 +9,8 @@ import logging
 # logging.basicConfig()
 # auth_krb5.logger.setLevel(logging.DEBUG)
 
+# Code inspired by geofft's cruftreg
+
 logger = logging.getLogger('auth_krb5')
 logger.addHandler(logging.NullHandler())
 
