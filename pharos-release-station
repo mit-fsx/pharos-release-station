@@ -1,0 +1,327 @@
+#!/usr/bin/python
+
+EXTRA_MODULES="/usr/share/pharos-release-station/modules"
+
+from gi.repository import GObject
+from gi.repository import GLib
+from gi.repository import Gtk
+from gi.repository import Gdk
+
+import sys
+import time
+import socket
+import os.path
+from optparse import OptionParser
+import ConfigParser
+import io
+import logging
+import omega
+haveReader=False
+try:
+    import magtek
+    haveReader=True
+except ImportError:
+    pass
+
+sys.path.append(EXTRA_MODULES)
+import auth_krb5
+
+UI_FILE="/usr/share/pharos-release-station/release-station.ui"
+CONFIG_FILE="/etc/pharos-release-station/config.ini"
+CONFIG_DEFAULTS={"site_password": "[redacted]",
+                 "omega_name": "wired-omega",
+                 "edi_server": "pharos-prod.mit.edu",
+                 }
+
+class ReleaseStation:
+    logger = logging.getLogger('ReleaseStation')
+
+    def __init__(self, options, config):
+        self.builder = Gtk.Builder()
+        self.logger.debug("In constructor")
+        try: 
+            self.builder.add_from_file(options.ui_file)
+        except GLib.GError, e:
+            print >> sys.stderr, "FATAL: Unable to load UI: ", e
+            sys.exit(-1)
+        
+        # Gtk signal handlers
+        handlers = {
+            "cb_login": self.cbLogin, 
+            "cb_exit": self.cbExit,
+            "cb_swipe": self.cbSwipe,
+            "cb_print": self.cbPrint,
+            "cb_printall": self.cbPrintAll,
+            "cb_delete": self.cbDelete
+        }
+        self.winMain = self.builder.get_object("winMain")
+        self.winMain.resize(640,480)
+        self.winMain.set_position(Gtk.WindowPosition.CENTER)
+        self.builder.get_object("nbMain").set_current_page(0)
+        self.winMain.show_all()
+        self.logger.debug("Connecting signals")
+        self.builder.connect_signals(handlers)
+        # Because we don't have a window manager
+        Gdk.Window.focus(self.winMain.get_window(), Gdk.CURRENT_TIME)
+
+        self.config = config
+        
+        # Card reader
+        self.magtek = None
+        try:
+            self.magtek = magtek.MagTek()
+        except magtek.MagTekException as e:
+            logging.warn("Could not connect to MagTek reader: %s", e.message)
+            
+        # Omega connection
+        try:
+            self.omega = omega.Omega(config.get('ReleaseStation', 'edi_server'))
+            self.omega.start_session(config.get('ReleaseStation', 'omega_name'), config.get('ReleaseStation', 'site_password'))
+        except omega.OmegaException as e:
+            self._errDialog("An error occurred while starting up: %s" % e.message, False)
+            sys.exit(1)
+        self.jobListStore = self.builder.get_object("jobList")
+        self.jobListStore.clear()
+        if self.magtek is None or self.magtek.getInterfaceType() != magtek.MagTek.INTERFACE_TYPE_HID:
+            self._errDialog("Card reader not found.  Card swiping disabled.", False)
+            self.builder.get_object("btnSwipe").set_sensitive(False)
+            self.builder.get_object("btnSwipe").set_label("(card reader unavailable)")
+        self.builder.get_object("treeviewPrintJobs").get_selection().connect("changed", self._selectionChanged)
+
+    def cbExit(self, widget):
+        self.jobListStore.clear()
+        self.builder.get_object("queueLbl").set_text("(please wait)")
+        self.builder.get_object("queueLbl").set_visible(True)
+        self.builder.get_object("treeviewWindow").set_visible(False)
+        self.builder.get_object("lblWelcome").set_text("")
+        # Unlock the user
+        if self.username is not None:
+            self.omega.unlockUser(self.username)
+        self._toggleJobButtons(False)
+        self.username = None
+        self.builder.get_object("tfUsername").set_text("")
+        self.builder.get_object("tfPassword").set_text("")
+        self.builder.get_object("nbMain").set_current_page(0)
+        
+
+    def _toggleJobButtons(self, state):
+        for b in ('btnDelete', 'btnPrint'):
+            self.builder.get_object(b).set_sensitive(state)
+
+    def _selectionChanged(self, widget, user_data=None):
+        if self._getSelectedJob() is not None:
+            self._toggleJobButtons(True)
+
+    def swipeCallback(self):
+        self.logger.debug("swipeCallback")
+        while Gtk.events_pending():
+            Gtk.main_iteration()
+        return not self._cancelSwipe
+
+    def cancelSwipe(self, x, y):
+        self.logger.debug("cancelSwipe")
+        # We don't really care about the response ID.  If the user somehow got rid of the dialog,
+        # they didn't want to swipe their card...
+        self._cancelSwipe = True
+
+    def cbSwipe(self, widget):
+        self._cancelSwipe = False
+        dlg = Gtk.MessageDialog(self.winMain,
+                                Gtk.DialogFlags.DESTROY_WITH_PARENT,
+                                Gtk.MessageType.INFO,
+                                Gtk.ButtonsType.CANCEL,
+                                "Swipe your card now...")
+        dlg.connect("response", self.cancelSwipe)
+        dlg.show()
+        while Gtk.events_pending():
+            Gtk.main_iteration()
+        self.logger.debug("Reading card...")
+        swipeData = self.magtek.readCard(self.swipeCallback)
+        dlg.destroy()
+        if swipeData is None:
+            return
+        self.logger.debug("Card read complete.")
+        track2 = swipeData.getTrack(2)
+        if swipeData.getTrack(1) is not None and swipeData.getTrack(1).startswith("%B"):
+            self._errDialog("Sorry, you can't pay for printing with a credit or debit card.\n\nBut thanks for the credit card number, it'll come in handy!\n\n(just kidding about that last part)", False)
+            return
+        if track2 is None:
+            self._errDialog("Couldn't read your card.  Please try again.\n\nIf your ID is old or your magnetic stripe is worn\nor damaged, you may need a replacement card.", False)
+            return
+        if swipeData.getTrack(3) is None or swipeData.getTrack(1):
+            if not self._askQuestion("That doesn't look like an MIT ID card.  Try to continue anyway?"):
+                return
+
+        username = None
+        self.logger.debug("Looking up card...")
+        try:
+            username = self.omega.getUsernameFromCard(track2)
+        except omega.PharosEDIException as e:
+            self._errDialog(e.message, False)
+            return
+        if len(username) > 0:
+            self.displayJobList(username)
+        else:
+            self._errDialog("Error: ", False)
+       
+    def authenticateUserWithKerberos(self, username, password):
+        rc=0
+        try:
+            rc=kpass(username, password,
+                     self.config.get('ReleaseStation', 'kpass_service'), 
+                     socket.getfqdn().lower(),
+                     'FILE:' + self.config.get('ReleaseStation', 'kpass_keytab')
+                     )
+        except KpassError as diag:
+            self._errDialog("Kerberos Error: " + diag.message, False)
+        return (rc == 1)
+
+    # TODO: locking?  Handle if locked on another terminal
+    def cbLogin(self, widget):
+        self.logger.debug("In login callback")
+        uname = self.builder.get_object("tfUsername").get_text()
+        password = self.builder.get_object("tfPassword").get_text()
+        if len(uname) < 1 or len(password) < 1:
+            self._errDialog("Both a username and password are required", False)
+            return
+        if self.authenticateUserWithKerberos(uname, password):
+            self.logger.debug("Got username: %s", uname)
+            if uname:
+                self.displayJobList(uname)
+        else:
+            self._errDialog("Kerberos Password Incorrect", False)
+
+    def _errDialog(self, message, verbose=True):
+        msg = message
+        dlg = Gtk.MessageDialog(self.winMain,
+                                Gtk.DialogFlags.DESTROY_WITH_PARENT,
+                                Gtk.MessageType.ERROR,
+                                Gtk.ButtonsType.CLOSE,
+                                message + ("\n\n(Please visit the TechCash office in W20-021\n or report this error to icp-help@mit.edu.)" if verbose else ""))
+        dlg.set_title("Error")
+        dlg.run()
+        dlg.destroy()
+
+    def _pulseBar(self):
+        self.builder.get_object("queueProgress").pulse()
+        while Gtk.events_pending():
+            Gtk.main_iteration()
+
+    def displayJobList(self, username):
+        self.username = username
+        self.builder.get_object("nbMain").set_current_page(1)
+        self.builder.get_object("queueProgress").show()
+        self._pulseBar()
+        self.logger.debug("Calling getUserDetails")
+        try:
+            details = self.omega.getUserDetails(username)
+        except omega.PharosEDIException as e:
+            self.logger.error("getUserDetails threw exception: %s", e.message)
+            self.builder.get_object("queueProgress").hide()
+            # Ugh
+            self._errDialog(e.message, not ("user is locked" in e.message))
+            self.cbExit(None)
+            return
+        self.builder.get_object("lblWelcome").set_text("User: %s     Quota Balance: %d pages" % (username, int(details.balance * 10)))
+        self._pulseBar()
+        self.logger.debug("Calling getPrintJobsForUser")
+        try:
+            jobs = self.omega.getPrintJobsForUser(username, self._pulseBar)
+        except omega.PharosEDIException as e:
+            self.logger.error("getPrintJobsForUser threw exception: %s", e.message)
+            self._errDialog("Error while retrieving print jobs: " + e.message)
+            self.cbExit(None)
+            return
+        self.logger.debug("Found %d jobs", len(jobs))
+        self.jobobjs = {}
+        self.jobListStore.clear()
+        if len(jobs) == 0:
+            self.builder.get_object("queueLbl").set_text("No print jobs found.")
+        if jobs:
+            self.builder.get_object("queueLbl").set_visible(False)
+            self.builder.get_object("treeviewWindow").set_visible(True)
+            for j in jobs:
+                self._pulseBar()
+                Gtk.main_iteration_do(False)
+                # TODO: Just store the object in the Liststore, but it needs to be a subclass of GObject
+                self.jobobjs[j.job_id] = j
+                self.jobListStore.append((j.job_id, j.username, j.formattedDate("%b %m %H:%M"), j.pages, j.jobname))
+            # Select the first job, emulate the Omegas
+            self.builder.get_object("treeviewPrintJobs").get_selection().select_iter(self.jobListStore.get_iter_first())
+        self.builder.get_object("queueProgress").hide()
+
+    def _getSelectedJob(self):
+        tree = self.builder.get_object("treeviewPrintJobs")
+        model, it = tree.get_selection().get_selected()
+        if it != None:
+            return model[it][0]
+        else:
+            return None
+
+    def _askQuestion(self, questionTxt):
+        dlg = Gtk.MessageDialog(self.winMain,
+                                Gtk.DialogFlags.DESTROY_WITH_PARENT,
+                                Gtk.MessageType.QUESTION,
+                                Gtk.ButtonsType.YES_NO,
+                                questionTxt)
+        dlg.set_title("Question")
+        response = dlg.run()
+        dlg.destroy()
+        return (response == Gtk.ResponseType.YES)
+
+    def cbPrint(self, widget):
+        job = self._getSelectedJob()
+        self._releaseJob(job)
+        self.displayJobList(self.username)
+
+    def _releaseJob(self, jobid):
+        if jobid is not None and jobid in self.jobobjs:
+            try:
+                self.omega.releaseJob(jobid, self.jobobjs[jobid].queue, self.jobobjs[jobid].username)
+            except omega.PharosEDIException as e:
+                self._errDialog("Error while releasing job:\n%s" % (e.message))
+
+
+    def cbPrintAll(self, widget):
+        if self._askQuestion("Are you sure you want to print all jobs?"):
+            print >>sys.stderr, self.jobobjs
+            for k in self.jobobjs:
+                self._releaseJob(k)
+        self.displayJobList(self.username)
+
+    def cbDelete(self, widget):
+        job = self._getSelectedJob()
+        if job is not None:
+            try:
+                self.omega.deleteJob(job, self.jobobjs[job].queue)
+            except omega.PharosEDIException(e):
+                self._errDialog("Error while deleting job:\n%s" % (e.message))
+        self.displayJobList(self.username)
+
+
+if __name__ == '__main__':
+    parser = OptionParser()
+    parser.set_defaults(debug=False)
+    parser.add_option("--debug", action="store_true", dest="debug")
+    parser.add_option("--ui", action="store", type="string",
+                      default=UI_FILE, dest="ui_file")
+    parser.add_option("--cfg", action="store", type="string",
+                      default=CONFIG_FILE, dest="config_file")
+    (options, args) = parser.parse_args()
+    logging.basicConfig(level=logging.FATAL)
+    if options.debug:
+        logging.getLogger('ReleaseStation').setLevel(logging.DEBUG)
+    config = ConfigParser.RawConfigParser(CONFIG_DEFAULTS)
+    config.readfp(io.BytesIO("[ReleaseStation]\n"))
+    config.read(options.config_file)
+    Gtk.init(None);
+    main_loop = GObject.MainLoop ()
+    alpha = ReleaseStation(options, config)
+#    GObject.timeout_add(30, dagreeter.updateTime)
+    try:
+        main_loop.run ()
+    except KeyboardInterrupt:
+        # TODO, don't quit
+        main_loop.quit()
+    except Exception:
+        print >> sys.stderr, "oops"
