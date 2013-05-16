@@ -1,5 +1,5 @@
 [Desktop Entry]
 Name=Release station
 Comment=Omega station
-Exec=/usr/bin/pharos-release-station
+Exec=/usr/lib/pharos-release-station/release-station-session
 Type=Application
