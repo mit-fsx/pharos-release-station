@@ -92,6 +92,14 @@ class ReleaseStation:
             self.builder.get_object("btnSwipe").set_label("(card reader unavailable)")
         self.builder.get_object("treeviewPrintJobs").get_selection().connect("changed", self._selectionChanged)
 
+    def _ensureConnection(self):
+        try:
+            if not self.omega.connected:
+                self.omega.start_session(config.get('ReleaseStation', 'omega_name'), config.get('ReleaseStation', 'site_password'))
+        except omega.OmegaException as e:
+            self._errDialog("An error occurred while reconnecting: %s" % e.message, False)
+            sys.exit(1)
+
     def cbKeyPress(self, widget, event):
         if widget is self.builder.get_object("winMain"):
             if event.keyval == Gdk.KEY_F12:
@@ -162,7 +170,11 @@ class ReleaseStation:
         while Gtk.events_pending():
             Gtk.main_iteration()
         self.logger.debug("Reading card...")
-        swipeData = self.magtek.readCard(self.swipeCallback)
+        swipeData = None
+        try:
+            swipeData = self.magtek.readCard(self.swipeCallback)
+        except:
+            self._errDialog("Could not read your card.  Please try again.\n(Do not swipe card before clicking button.)", False)
         dlg.destroy()
         if swipeData is None:
             return
@@ -181,6 +193,7 @@ class ReleaseStation:
         username = None
         self.logger.debug("Looking up card...")
         try:
+            self._ensureConnection()
             username = self.omega.getUsernameFromCard(track2)
         except omega.PharosEDIException as e:
             self._errDialog(e.message, False)
@@ -207,6 +220,7 @@ class ReleaseStation:
         if krbauth.authenticate(uname, password):
             self.logger.debug("Got username: %s", uname)
             if uname:
+                self._ensureConnection()
                 self.displayJobList(uname)
         else:
             self._errDialog("Error: %s" % krbauth.error, False)
@@ -219,6 +233,14 @@ class ReleaseStation:
                                 Gtk.ButtonsType.CLOSE,
                                 message + ("\n\n(Please visit the TechCash office in W20-021\n or report this error to icp-help@mit.edu.)" if verbose else ""))
         dlg.set_title("Error")
+        red = Gdk.RGBA()
+        red.parse("#993333")
+        grey = Gdk.RGBA()
+        grey.parse("#666666")
+        white = Gdk.RGBA()
+        white.parse("white")
+        dlg.override_background_color(0, red)
+        dlg.override_color(0, white)
         dlg.run()
         dlg.destroy()
 
@@ -320,6 +342,8 @@ class ReleaseStation:
 
 
     def _excepthook(self, type, value, tb):
+        if type is KeyboardInterrupt:
+            return
         print >>sys.stderr, "Unhandled exception:\n%s\n" % ''.join(traceback.format_exception(type, value, tb))
         dlg = Gtk.MessageDialog(self.winMain,
                                 Gtk.DialogFlags.DESTROY_WITH_PARENT,
