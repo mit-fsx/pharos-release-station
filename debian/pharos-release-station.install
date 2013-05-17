@@ -1,6 +1,8 @@
 release-station usr/lib/pharos-release-station
 release-station-session usr/lib/pharos-release-station
 release-station.ui usr/share/pharos-release-station
+logo.png usr/share/pharos-release-station
+id-card.jpg usr/share/pharos-release-station
 pharos-release-station.desktop usr/share/xsessions
 auth/auth_krb5.py usr/share/pharos-release-station/modules
 debian/config.ini etc/pharos-release-station

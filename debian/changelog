@@ -1,3 +1,9 @@
+pharos-release-station (1.1.2) unstable; urgency=low
+
+  * Add images and clean up UI
+
+ -- Jonathan Reed <jdreed@mit.edu>  Fri, 17 May 2013 10:42:15 -0400
+
 pharos-release-station (1.1.1) unstable; urgency=low
 
   * Handle bad swipes and session expiration
