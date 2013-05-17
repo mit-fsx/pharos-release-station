@@ -1,6 +1,12 @@
 #!/usr/bin/python
 
 EXTRA_MODULES="/usr/share/pharos-release-station/modules"
+LOGGER_NAME="pharos-release-station"
+UI_FILE="/usr/share/pharos-release-station/release-station.ui"
+CONFIG_FILE="/etc/pharos-release-station/config.ini"
+CONFIG_DEFAULTS = { "edi_use_ssl": "true",
+                  }
+
 
 from gi.repository import GObject
 from gi.repository import GLib
@@ -16,30 +22,23 @@ from optparse import OptionParser
 import ConfigParser
 import io
 import logging
+
+# Local modules as separate packages
 import omega
-haveReader=False
-try:
-    import magtek
-    haveReader=True
-except ImportError:
-    pass
+import magtek
 
 sys.path.append(EXTRA_MODULES)
+# Modules kept separate but shipped with this
 import auth_krb5
 
-UI_FILE="/usr/share/pharos-release-station/release-station.ui"
-CONFIG_FILE="/etc/pharos-release-station/config.ini"
-CONFIG_DEFAULTS = { "edi_use_ssl": "true",
-                  }
+logger = logging.getLogger(LOGGER_NAME)
 
 class ReleaseStation:
-    logger = logging.getLogger('ReleaseStation')
-
     def __init__(self, options, config):
         self.builder = Gtk.Builder()
-        self.logger.debug("In constructor")
         try: 
             self.builder.add_from_file(options.ui_file)
+            logger.debug("Builder UI loaded")
         except GLib.GError, e:
             print >> sys.stderr, "FATAL: Unable to load UI: ", e
             sys.exit(-1)
@@ -62,39 +61,45 @@ class ReleaseStation:
         self.winMain.set_position(Gtk.WindowPosition.CENTER)
         self.builder.get_object("nbMain").set_current_page(0)
         self.winMain.show_all()
-        self.logger.debug("Connecting signals")
+        logger.debug("Main screen turn on!")
         self.builder.connect_signals(handlers)
+        logger.debug("We get signal!")
         # Because we don't have a window manager
         Gdk.Window.focus(self.winMain.get_window(), Gdk.CURRENT_TIME)
 
         self.config = config
-        
         # Card reader
         self.magtek = None
         try:
             self.magtek = magtek.MagTek()
         except magtek.MagTekException as e:
-            logging.warn("Could not connect to MagTek reader: %s", e.message)
-            
+            if e.type != magtek.MagTekException.NO_READER:
+                logger.warn("Error while initializing MagTek module: %s", 
+                            e.message)
+
         # Omega connection
         try:
             self.omega = omega.Omega(config.get('ReleaseStation', 'edi_server'), 
                                      config.getboolean('ReleaseStation', 'edi_use_ssl'))
-            self.omega.start_session(config.get('ReleaseStation', 'omega_name'), config.get('ReleaseStation', 'site_password'))
+            self.omega.start_session(config.get('ReleaseStation', 'omega_name'),
+                                     config.get('ReleaseStation', 'site_password'))
         except omega.OmegaException as e:
             self._errDialog("An error occurred while starting up: %s" % e.message, False)
             sys.exit(1)
         self.jobListStore = self.builder.get_object("jobList")
         self.jobListStore.clear()
         if self.magtek is None or self.magtek.getInterfaceType() != magtek.MagTek.INTERFACE_TYPE_HID:
-            self._errDialog("Card reader not found.  Card swiping disabled.", False)
+            if self.magtek is None:
+                self._errDialog("Card reader not found.  Card swiping disabled.", False)
+            else:
+                self._errDialog("Card reader present, but not in HID mode.  Card swiping disabled.", False)
             self.builder.get_object("btnSwipe").set_sensitive(False)
             self.builder.get_object("btnSwipe").set_label("(card reader unavailable)")
         self.builder.get_object("treeviewPrintJobs").get_selection().connect("changed", self._selectionChanged)
 
     def _ensureConnection(self):
         try:
-            if not self.omega.connected:
+            if not self.omega.connected():
                 self.omega.start_session(config.get('ReleaseStation', 'omega_name'), config.get('ReleaseStation', 'site_password'))
         except omega.OmegaException as e:
             self._errDialog("An error occurred while reconnecting: %s" % e.message, False)
@@ -147,13 +152,13 @@ class ReleaseStation:
             self._toggleJobButtons(True)
 
     def swipeCallback(self):
-        self.logger.debug("swipeCallback")
+        logger.debug("swipeCallback")
         while Gtk.events_pending():
             Gtk.main_iteration()
         return not self._cancelSwipe
 
     def cancelSwipe(self, x, y):
-        self.logger.debug("cancelSwipe")
+        logger.debug("cancelSwipe")
         # We don't really care about the response ID.  If the user somehow got rid of the dialog,
         # they didn't want to swipe their card...
         self._cancelSwipe = True
@@ -169,7 +174,7 @@ class ReleaseStation:
         dlg.show()
         while Gtk.events_pending():
             Gtk.main_iteration()
-        self.logger.debug("Reading card...")
+        logger.debug("Reading card...")
         swipeData = None
         try:
             swipeData = self.magtek.readCard(self.swipeCallback)
@@ -178,7 +183,7 @@ class ReleaseStation:
         dlg.destroy()
         if swipeData is None:
             return
-        self.logger.debug("Card read complete.")
+        logger.debug("Card read complete.")
         track2 = swipeData.getTrack(2)
         if swipeData.getTrack(1) is not None and swipeData.getTrack(1).startswith("%B"):
             self._errDialog("Sorry, you can't pay for printing with a credit or debit card.\n\nBut thanks for the credit card number, it'll come in handy!\n\n(just kidding about that last part)", False)
@@ -191,7 +196,7 @@ class ReleaseStation:
                 return
 
         username = None
-        self.logger.debug("Looking up card...")
+        logger.debug("Looking up card...")
         try:
             self._ensureConnection()
             username = self.omega.getUsernameFromCard(track2)
@@ -211,14 +216,14 @@ class ReleaseStation:
 
     # TODO: locking?  Handle if locked on another terminal
     def cbLogin(self, widget):
-        self.logger.debug("In login callback")
+        logger.debug("In login callback")
         uname = self.builder.get_object("tfUsername").get_text()
         password = self.builder.get_object("tfPassword").get_text()
         if len(uname) < 1 or len(password) < 1:
             return
         krbauth = auth_krb5.Authenticator('pharos-release-station')
         if krbauth.authenticate(uname, password):
-            self.logger.debug("Got username: %s", uname)
+            logger.debug("Got username: %s", uname)
             if uname:
                 self._ensureConnection()
                 self.displayJobList(uname)
@@ -254,11 +259,11 @@ class ReleaseStation:
         self.builder.get_object("nbMain").set_current_page(1)
         self.builder.get_object("queueProgress").show()
         self._pulseBar()
-        self.logger.debug("Calling getUserDetails")
+        logger.debug("Calling getUserDetails")
         try:
             details = self.omega.getUserDetails(username)
         except omega.PharosEDIException as e:
-            self.logger.error("getUserDetails threw exception: %s", e.message)
+            logger.error("getUserDetails threw exception: %s", e.message)
             self.builder.get_object("queueProgress").hide()
             # Ugh
             self._errDialog(e.message, not ("user is locked" in e.message))
@@ -266,15 +271,15 @@ class ReleaseStation:
             return
         self.builder.get_object("lblWelcome").set_text("User: %s     Quota Balance: %d pages" % (username, int(details.balance * 10)))
         self._pulseBar()
-        self.logger.debug("Calling getPrintJobsForUser")
+        logger.debug("Calling getPrintJobsForUser")
         try:
             jobs = self.omega.getPrintJobsForUser(username, self._pulseBar)
         except omega.PharosEDIException as e:
-            self.logger.error("getPrintJobsForUser threw exception: %s", e.message)
+            logger.error("getPrintJobsForUser threw exception: %s", e.message)
             self._errDialog("Error while retrieving print jobs: " + e.message)
             self.cbExit(None)
             return
-        self.logger.debug("Found %d jobs", len(jobs))
+        logger.debug("Found %d jobs", len(jobs))
         self.jobobjs = {}
         self.jobListStore.clear()
         if len(jobs) == 0:
@@ -365,7 +370,7 @@ if __name__ == '__main__':
     (options, args) = parser.parse_args()
     logging.basicConfig(level=logging.FATAL)
     if options.debug:
-        logging.getLogger('ReleaseStation').setLevel(logging.DEBUG)
+        logging.getLogger(LOGGER_NAME).setLevel(logging.DEBUG)
     if not os.path.isfile(options.config_file):
         print >>sys.stderr, "Config file %s not found" % options.config_file
         sys.exit(1)
