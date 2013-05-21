@@ -11,12 +11,6 @@
     <property name="step_increment">1</property>
     <property name="page_increment">10</property>
   </object>
-  <object class="GtkImage" id="imgCard">
-    <property name="visible">True</property>
-    <property name="can_focus">False</property>
-    <property name="ypad">5</property>
-    <property name="stock">gtk-missing-image</property>
-  </object>
   <object class="GtkListStore" id="jobList">
     <columns>
       <!-- column-name id -->
@@ -116,8 +110,9 @@
               <object class="GtkBox" id="box4">
                 <property name="visible">True</property>
                 <property name="can_focus">False</property>
+                <property name="halign">center</property>
                 <property name="valign">center</property>
-                <property name="homogeneous">True</property>
+                <property name="orientation">vertical</property>
                 <child>
                   <object class="GtkFrame" id="frame1">
                     <property name="visible">True</property>
@@ -130,20 +125,11 @@
                         <property name="can_focus">False</property>
                         <property name="left_padding">12</property>
                         <child>
-                          <object class="GtkButton" id="btnSwipe">
-                            <property name="label" translatable="yes">Click Here To Swipe Your Card</property>
-                            <property name="use_action_appearance">False</property>
+                          <object class="GtkImage" id="imgCard">
                             <property name="visible">True</property>
-                            <property name="can_focus">True</property>
-                            <property name="receives_default">True</property>
-                            <property name="halign">center</property>
-                            <property name="valign">center</property>
-                            <property name="margin_top">5</property>
-                            <property name="margin_bottom">5</property>
-                            <property name="use_action_appearance">False</property>
-                            <property name="image">imgCard</property>
-                            <property name="image_position">top</property>
-                            <signal name="clicked" handler="cb_swipe" swapped="no"/>
+                            <property name="can_focus">False</property>
+                            <property name="ypad">5</property>
+                            <property name="stock">gtk-missing-image</property>
                           </object>
                         </child>
                       </object>
@@ -153,7 +139,7 @@
                         <property name="visible">True</property>
                         <property name="can_focus">False</property>
                         <property name="xpad">3</property>
-                        <property name="label" translatable="yes">&lt;b&gt;MIT ID Card&lt;/b&gt;</property>
+                        <property name="label" translatable="yes">&lt;b&gt;Swipe MIT ID Card&lt;/b&gt;</property>
                         <property name="use_markup">True</property>
                         <attributes>
                           <attribute name="font-desc" value="Sans 14"/>
@@ -166,6 +152,23 @@
                     <property name="fill">True</property>
                     <property name="padding">5</property>
                     <property name="position">0</property>
+                  </packing>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="label3">
+                    <property name="visible">True</property>
+                    <property name="can_focus">False</property>
+                    <property name="label" translatable="yes">OR</property>
+                    <property name="justify">right</property>
+                    <attributes>
+                      <attribute name="font-desc" value="Sans 14"/>
+                      <attribute name="weight" value="bold"/>
+                    </attributes>
+                  </object>
+                  <packing>
+                    <property name="expand">False</property>
+                    <property name="fill">True</property>
+                    <property name="position">1</property>
                   </packing>
                 </child>
                 <child>
@@ -286,7 +289,7 @@
                         <property name="visible">True</property>
                         <property name="can_focus">False</property>
                         <property name="xpad">3</property>
-                        <property name="label" translatable="yes">&lt;b&gt;Username and Password&lt;/b&gt;</property>
+                        <property name="label" translatable="yes">&lt;b&gt;Kerberos Username and Password&lt;/b&gt;</property>
                         <property name="use_markup">True</property>
                         <attributes>
                           <attribute name="font-desc" value="Sans 14"/>
@@ -298,7 +301,7 @@
                     <property name="expand">False</property>
                     <property name="fill">True</property>
                     <property name="padding">5</property>
-                    <property name="position">1</property>
+                    <property name="position">2</property>
                   </packing>
                 </child>
               </object>

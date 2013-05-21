@@ -10,25 +10,18 @@ CONFIG_DEFAULTS = { "edi_use_ssl": "true",
                   }
 
 
-from gi.repository import GObject
-from gi.repository import GLib
-from gi.repository import Gtk
-from gi.repository import Gdk
-from gi.repository import GdkPixbuf
+from gi.repository import GObject, GLib, Gtk, Gdk, GdkPixbuf
 
-import sys
-import traceback
-import time
-import socket
-import os.path
 from optparse import OptionParser
-import ConfigParser
-import io
+
+import ConfigParser, io
+
+import sys, os.path, time, traceback
 import logging
+import threading
 
 # Local modules as separate packages
-import omega
-import magtek
+import omega, magtek
 
 sys.path.append(EXTRA_MODULES)
 # Modules kept separate but shipped with this
@@ -37,9 +30,17 @@ import auth_krb5
 logger = logging.getLogger(LOGGER_NAME)
 
 class ReleaseStation:
-    def __init__(self, options, config):
+    def __init__(self, options, config, quitFunction):
+        """Constructor
+
+        options -- dictionary of values from OptionParser
+        config -- ConfigParser configuration
+        quitFunction -- something callable (i.e. GLib.MainLoop().quit or Gtk.main_quit)
+        """
         self.builder = Gtk.Builder()
         self.config = config
+        self.quitFunction = quitFunction
+        self.threads = []
         try: 
             self.builder.add_from_file(options.ui_file)
             logger.debug("Builder UI loaded")
@@ -68,6 +69,7 @@ class ReleaseStation:
         try:
             pixbuf = GdkPixbuf.Pixbuf.new_from_file(config.get('ReleaseStation', 'logo_image_file'))
         except GLib.GError as e:
+            
             self._errDialog("Failed to load image file %s" % config.get('ReleaseStation', 'logo_image_file'), False)
             pixbuf = GdkPixbuf.Pixbuf.new(GdkPixbuf.Colorspace.RGB, False, 8, 10, 10)
         self.builder.get_object("imgLogo").set_from_pixbuf(pixbuf)
@@ -86,14 +88,12 @@ class ReleaseStation:
         self.gtkSettings = Gtk.Settings.get_default()
         self.gtkSettings.set_property('gtk-button-images', True)
 
-        # Card reader
         self.magtek = None
         try:
             self.magtek = magtek.MagTek()
         except magtek.MagTekException as e:
             if e.type != magtek.MagTekException.NO_READER:
-                logger.warn("Error while initializing MagTek module: %s", 
-                            e.message)
+                logger.warn("Error while initializing MagTek module: %s", e.message)
 
         # Omega connection
         try:
@@ -126,7 +126,7 @@ class ReleaseStation:
             sys.exit(1)
 
     def cbKeyPress(self, widget, event):
-        logger.debug("Keypress event received by %s", widget)
+#        logger.debug("Keypress event received by %s", widget)
         if widget is self.builder.get_object("winMain"):
             if event.keyval == Gdk.KEY_F12:
                 logger.warn("Enabling admin mode")
@@ -137,7 +137,14 @@ class ReleaseStation:
             self.builder.get_object("tfUsername").grab_focus()
 
     def cbExitApp(self, widget):
-        Gtk.main_quit()
+        for t in self.threads:
+            if not isinstance(t, threading.Thread):
+                logger.fatal("Thread %s is not a thread!", t)
+            try:
+                t.stop()
+            except Exception as e:
+                logger.fatal("Exception while terminating thread: %s", e)
+        self.quitFunction()
 
     def cbToggleTabs(self, widget):
         nb = self.builder.get_object("nbMain")
@@ -187,57 +194,58 @@ class ReleaseStation:
         self._cancelSwipe = True
 
     def cbSwipe(self, widget):
-        self._cancelSwipe = False
-        dlg = Gtk.MessageDialog(self.winMain,
-                                Gtk.DialogFlags.DESTROY_WITH_PARENT,
-                                Gtk.MessageType.INFO,
-                                Gtk.ButtonsType.CANCEL,
-                                "Swipe your card now...")
-        dlg.connect("response", self.cancelSwipe)
-        red = Gdk.RGBA()
-        red.parse("#993333")
-        white = Gdk.RGBA()
-        white.parse("white")
-        dlg.override_background_color(0, red)
-        dlg.override_color(0, white)
-        dlg.show()
-        while Gtk.events_pending():
-            Gtk.main_iteration()
-        swipeData = None
-        logger.debug("About to read card...")
-        try:
-            swipeData = self.magtek.readCard(self.swipeCallback)
-        except:
-            self._errDialog("Could not read your card.  Please try again.\n(Do not swipe card before clicking button.)", False)
-        dlg.destroy()
-        if swipeData is None:
-            logger.debug("swipeData = None, user probably cancelled...")
-            return
-        logger.debug("Got some card data...")
-        track2 = swipeData.getTrack(2)
-        logger.debug("Track 2 data: %s", track2)
-        if swipeData.getTrack(1) is not None and swipeData.getTrack(1).startswith("%B"):
-            self._errDialog("Sorry, you can't pay for printing with a credit or debit card.\n\nBut thanks for the credit card number, it'll come in handy!\n\n(just kidding about that last part)", False)
-            return
-        if track2 is None:
-            self._errDialog("Couldn't read your card.  Please try again.\n\nIf your ID is old or your magnetic stripe is worn\nor damaged, you may need a replacement card.", False)
-            return
-        if swipeData.getTrack(3) is None or swipeData.getTrack(1):
-            if not self._askQuestion("That doesn't look like an MIT ID card.  Try to continue anyway?"):
-                return
+        pass
+        # self._cancelSwipe = False
+        # dlg = Gtk.MessageDialog(self.winMain,
+        #                         Gtk.DialogFlags.DESTROY_WITH_PARENT,
+        #                         Gtk.MessageType.INFO,
+        #                         Gtk.ButtonsType.CANCEL,
+        #                         "Swipe your card now...")
+        # dlg.connect("response", self.cancelSwipe)
+        # red = Gdk.RGBA()
+        # red.parse("#993333")
+        # white = Gdk.RGBA()
+        # white.parse("white")
+        # dlg.override_background_color(0, red)
+        # dlg.override_color(0, white)
+        # dlg.show()
+        # while Gtk.events_pending():
+        #     Gtk.main_iteration()
+        # swipeData = None
+        # logger.debug("About to read card...")
+        # try:
+        #     swipeData = self.magtek.readCard(self.swipeCallback)
+        # except:
+        #     self._errDialog("Could not read your card.  Please try again.\n(Do not swipe card before clicking button.)", False)
+        # dlg.destroy()
+        # if swipeData is None:
+        #     logger.debug("swipeData = None, user probably cancelled...")
+        #     return
+        # logger.debug("Got some card data...")
+        # track2 = swipeData.getTrack(2)
+        # logger.debug("Track 2 data: %s", track2)
+        # if swipeData.getTrack(1) is not None and swipeData.getTrack(1).startswith("%B"):
+        #     self._errDialog("Sorry, you can't pay for printing with a credit or debit card.\n\nBut thanks for the credit card number, it'll come in handy!\n\n(just kidding about that last part)", False)
+        #     return
+        # if track2 is None:
+        #     self._errDialog("Couldn't read your card.  Please try again.\n\nIf your ID is old or your magnetic stripe is worn\nor damaged, you may need a replacement card.", False)
+        #     return
+        # if swipeData.getTrack(3) is None or swipeData.getTrack(1):
+        #     if not self._askQuestion("That doesn't look like an MIT ID card.  Try to continue anyway?"):
+        #         return
 
-        username = None
-        logger.debug("Looking up card...")
-        try:
-            self._ensureConnection()
-            username = self.omega.getUsernameFromCard(track2)
-        except omega.PharosEDIException as e:
-            self._errDialog(e.message, False)
-            return
-        if len(username) > 0:
-            self.displayJobList(username)
-        else:
-            self._errDialog("Error: ", False)
+        # username = None
+        # logger.debug("Looking up card...")
+        # try:
+        #     self._ensureConnection()
+        #     username = self.omega.getUsernameFromCard(track2)
+        # except omega.PharosEDIException as e:
+        #     self._errDialog(e.message, False)
+        #     return
+        # if len(username) > 0:
+        #     self.displayJobList(username)
+        # else:
+        #     self._errDialog("Error: ", False)
        
 
     def cbUserActivate(self, widget):
@@ -255,6 +263,7 @@ class ReleaseStation:
         krbauth = auth_krb5.Authenticator('pharos-release-station')
         if krbauth.authenticate(uname, password):
             logger.debug("Got username: %s", uname)
+            self._acceptSwipes = False
             if uname:
                 self._ensureConnection()
                 self.displayJobList(uname)
@@ -275,8 +284,11 @@ class ReleaseStation:
         white.parse("white")
         dlg.override_background_color(0, red)
         dlg.override_color(0, white)
+        logger.debug("Running _errDialog")
         dlg.run()
+        logger.debug("Done with _errDialog")
         dlg.destroy()
+        logger.debug("Destroyed _errDialog")
 
     def _pulseBar(self):
         self.builder.get_object("queueProgress").pulse()
@@ -375,6 +387,38 @@ class ReleaseStation:
         self.displayJobList(self.username)
 
 
+    def swipeCallback2(self):
+        logger.debug("swipeCallback2")
+        while Gtk.events_pending():
+            logger.debug("Calling main_iteration() 2")
+            Gtk.main_iteration()
+        return True
+
+    def checkForSwipe(self, swipeData=None):
+        track2 = swipeData.getTrack(2)
+        logger.debug("Track 2: %s", track2)
+        if swipeData.getTrack(1) is not None and swipeData.getTrack(1).startswith("%B"):
+            self._errDialog("Sorry, you can't pay for printing with a credit or debit card.\n\nBut thanks for the credit card number, it'll come in handy!\n\n(just kidding about that last part)", False)
+            return
+        if track2 is None:
+            self._errDialog("Couldn't read your card.  Please try again.\n\nIf your ID is old or your magnetic stripe is worn\nor damaged, you may need a replacement card.", False)
+            return
+        if swipeData.getTrack(3) is None or swipeData.getTrack(1):
+            if not self._askQuestion("That doesn't look like an MIT ID card.  Try to continue anyway?"):
+                return
+
+        username = None
+        logger.debug("Looking up card...")
+        try:
+            self._ensureConnection()
+            username = self.omega.getUsernameFromCard(track2)
+        except omega.PharosEDIException as e:
+            self._errDialog(e.message, False)
+        if len(username) > 0:
+            self.displayJobList(username)
+        else:
+            self._errDialog("Error: ", False)
+
     def _excepthook(self, type, value, tb):
         if type is KeyboardInterrupt:
             return
@@ -388,7 +432,45 @@ class ReleaseStation:
         dlg.destroy()
         sys.exit(1)
 
+class cardReaderThread(threading.Thread):
+    stopEvent = threading.Event()
+
+    def __init__(self, reader=None, consumerObj=None):
+        super(cardReaderThread, self).__init__(None, None, 'CardReaderThread')
+        self.consumerObj = consumerObj
+        self.reader = reader
+        self.logger = logging.getLogger(LOGGER_NAME).getChild("cardReaderThread")
+
+    # A callback to stop the blocking loop in readCard
+    def _readerCallback(self):
+        self.logger.debug("_readerCallback")
+        return not self.stopEvent.isSet()
+
+    def run(self):
+        self.logger.debug("Starting thread")
+        while not self.stopEvent.isSet():
+            swipeData = None
+            try:
+                self.logger.debug("Calling readCard...")
+                swipeData = self.reader.readCard(True, self._readerCallback)
+            except Exception as e:
+                self.logger.warning("Exception while reading card data: %s", e)
+            if swipeData is None:
+                self.logger.debug("swipeData = None, user probably cancelled...")
+            else:
+                self.logger.debug("Got swipe data")
+                if self.consumerObj is not None:
+                    # Add an idle callback.  Doing this any other way will block the UI.
+                    Gdk.threads_add_idle(GLib.PRIORITY_DEFAULT, self.consumerObj.checkForSwipe, swipeData)
+                    self.logger.debug("idle thread callback added")
+                else:
+                    logger.warn("consumerObj is None, cannot notify")
+
+    def stop(self):
+        self.stopEvent.set()
+
 if __name__ == '__main__':
+    # Parse command line options
     parser = OptionParser()
     parser.set_defaults(debug=False)
     parser.add_option("--debug", action="store_true", dest="debug")
@@ -397,25 +479,40 @@ if __name__ == '__main__':
     parser.add_option("--cfg", action="store", type="string",
                       default=CONFIG_FILE, dest="config_file")
     (options, args) = parser.parse_args()
-    logging.basicConfig(level=logging.FATAL)
+    # Initialize logging
+    logging.basicConfig(level=logging.ERROR)
     if options.debug:
-        logging.getLogger(LOGGER_NAME).setLevel(logging.DEBUG)
+        logger.setLevel(logging.DEBUG)
+    # Parse config file
     if not os.path.isfile(options.config_file):
         print >>sys.stderr, "Config file %s not found" % options.config_file
         sys.exit(1)
     config = ConfigParser.RawConfigParser(CONFIG_DEFAULTS)
     config.readfp(io.BytesIO("[ReleaseStation]\n"))
     config.read(options.config_file)
+    # This initializes threading support in the PyGObject bindings.  This is not
+    # a GObject API call.
+    GObject.threads_init()
+    # Initialize Gdk.Gtk thread support
+    Gdk.threads_init()
     Gtk.init(None)
-#    main_loop = GObject.MainLoop ()
+    main_loop = GLib.MainLoop()
     try:
-        alpha = ReleaseStation(options, config)
+        alpha = ReleaseStation(options, config, main_loop.quit)
+        cardReader = cardReaderThread(alpha.magtek, alpha)
+        alpha.threads.append(cardReader)
+        cardReader.start()
         sys.excepthook = alpha._excepthook
-        Gtk.main()
-#        main_loop.run ()
-    except KeyboardInterrupt:
-        # TODO, don't quit
-        Gtk.main_quit()
-#        main_loop.quit()
     except Exception as e:
         print >> sys.stderr, "Unexpected error while starting application", e.message
+    try:
+        main_loop.run()
+    except KeyboardInterrupt:
+        logger.debug("KeyboardInterrupt received, shutting down...")
+        # TODO, don't quit
+        cardReader.stop()
+        logger.debug("Threads stopped.  Quitting main_loop")
+        main_loop.quit()
+    except Exception as e:
+        print >> sys.stderr, "A fatal error occurred while running the main loop", e
+        
