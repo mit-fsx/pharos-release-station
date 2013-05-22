@@ -5,6 +5,7 @@ LOGGER_NAME="pharos-release-station"
 UI_FILE="/usr/share/pharos-release-station/release-station.ui"
 CONFIG_FILE="/etc/pharos-release-station/config.ini"
 CONFIG_DEFAULTS = { "edi_use_ssl": "true",
+                    "admin_password": "change_this",
                     "logo_image_file": "/usr/share/pharos-release-station/logo.png",
                     "idcard_image_file": "/usr/share/pharos-release-station/id-card.jpg",
                   }
@@ -25,9 +26,12 @@ import omega, magtek
 
 sys.path.append(EXTRA_MODULES)
 # Modules kept separate but shipped with this
-import auth_krb5
+import auth_krb5, omega_site
 
 logger = logging.getLogger(LOGGER_NAME)
+
+class ReleaseStationInternalError(Exception):
+    pass
 
 class ReleaseStation:
     def __init__(self, options, config, quitFunction):
@@ -51,12 +55,13 @@ class ReleaseStation:
         # Gtk signal handlers
         handlers = {
             "kpEvent": self.cbKeyPress,
+            "cb_admin_off": self.cbAdminOff,
             "cb_login": self.cbLogin, 
             "cb_toggle_tabs": self.cbToggleTabs, 
             "cb_user_activate": self.cbUserActivate,
             "cb_exit": self.cbExit,
             "cb_exit_app": self.cbExitApp,
-            "cb_swipe": self.cbSwipe,
+            "cb_restart_app": self.cbRestartApp,
             "cb_print": self.cbPrint,
             "cb_printall": self.cbPrintAll,
             "cb_delete": self.cbDelete
@@ -125,21 +130,44 @@ class ReleaseStation:
             self._errDialog("An error occurred while reconnecting to Pharos: %s" % e.message, False)
             sys.exit(1)
 
+    def cbAdminOff(self, widget):
+        self.builder.get_object("adminBox").set_visible(False)
+
+    def toggleAdminMode(self):
+        if self.builder.get_object("adminBox").get_visible():
+            self.builder.get_object("adminBox").set_visible(False)
+        else:
+            dlg = self.builder.get_object("adminDialog")
+            if dlg.run() == Gtk.ResponseType.OK:
+                if self.config.get('ReleaseStation', "admin_password") == self.builder.get_object("adminPassword").get_text():
+                    logger.info("Enabling admin mode")
+                    self.builder.get_object("adminBox").set_visible(True)
+                else:
+                    self._errDialog("Password incorrect", False)
+            self.builder.get_object("adminPassword").set_text('')
+            dlg.hide()
+            
+
     def cbKeyPress(self, widget, event):
-#        logger.debug("Keypress event received by %s", widget)
+        logger.debug("Keypress event received by %s", widget)
         if widget is self.builder.get_object("winMain"):
             if event.keyval == Gdk.KEY_F12:
-                logger.warn("Enabling admin mode")
-                self.builder.get_object("adminBox").set_visible(True)
+                self.toggleAdminMode()
         elif event.keyval == Gdk.KEY_Escape:
-            self.builder.get_object("tfUsername").set_text('')
-            self.builder.get_object("tfPassword").set_text('')
-            self.builder.get_object("tfUsername").grab_focus()
+            self.resetLoginScreen()
 
     def cbExitApp(self, widget):
+        self.quitApp()
+
+    def cbRestartApp(self, widget):
+        self.quitApp()
+        sys.exit(128)
+
+    def quitApp(self):
         for t in self.threads:
             if not isinstance(t, threading.Thread):
                 logger.fatal("Thread %s is not a thread!", t)
+                continue
             try:
                 t.stop()
             except Exception as e:
@@ -156,21 +184,31 @@ class ReleaseStation:
             widget.set_label("Hide Tabs")
 
     def cbExit(self, widget):
+        self.returnToLogin()
+
+    def resetLoginScreen(self):
+        self.builder.get_object("tfUsername").set_text("")
+        self.builder.get_object("tfPassword").set_text("")
+        self.builder.get_object("tfUsername").grab_focus()
+        
+
+    def returnToLogin(self):
+        # Clear the job ListStore
         self.jobListStore.clear()
+        # reset the UI on the release pane
+        self._toggleJobButtons(False)
+        self.queueProgress('hide')
         self.builder.get_object("queueLbl").set_text("(please wait)")
         self.builder.get_object("queueLbl").set_visible(True)
         self.builder.get_object("treeviewWindow").set_visible(False)
-        self.builder.get_object("lblWelcome").set_text("")
+        for lbl in ("lblUsername", "lblBalance", "lblSoftQuota", "lblPrintingPlan"):
+            self.builder.get_object(lbl).set_text("")
         # Unlock the user
-        if self.username is not None:
-            self.omega.unlockUser(self.username)
-        self._toggleJobButtons(False)
-        self.username = None
-        self.builder.get_object("tfUsername").set_text("")
-        self.builder.get_object("tfPassword").set_text("")
+        if self._currentUser is not None:
+            self.omega.unlockUser(self._currentUser)
+        self._currentUser = None
         self.builder.get_object("nbMain").set_current_page(0)
-        self.builder.get_object("tfUsername").grab_focus()
-        
+        self.resetLoginScreen()
 
     def _toggleJobButtons(self, state):
         for b in ('btnDelete', 'btnPrint'):
@@ -179,74 +217,6 @@ class ReleaseStation:
     def _selectionChanged(self, widget, user_data=None):
         if self._getSelectedJob() is not None:
             self._toggleJobButtons(True)
-
-    def swipeCallback(self):
-        logger.debug("swipeCallback")
-        while Gtk.events_pending():
-            logger.debug("Calling main_iteration()")
-            Gtk.main_iteration()
-        return not self._cancelSwipe
-
-    def cancelSwipe(self, x, y):
-        logger.debug("Swipe cancelled")
-        # We don't really care about the response ID.  If the user somehow got rid of the dialog,
-        # they didn't want to swipe their card...
-        self._cancelSwipe = True
-
-    def cbSwipe(self, widget):
-        pass
-        # self._cancelSwipe = False
-        # dlg = Gtk.MessageDialog(self.winMain,
-        #                         Gtk.DialogFlags.DESTROY_WITH_PARENT,
-        #                         Gtk.MessageType.INFO,
-        #                         Gtk.ButtonsType.CANCEL,
-        #                         "Swipe your card now...")
-        # dlg.connect("response", self.cancelSwipe)
-        # red = Gdk.RGBA()
-        # red.parse("#993333")
-        # white = Gdk.RGBA()
-        # white.parse("white")
-        # dlg.override_background_color(0, red)
-        # dlg.override_color(0, white)
-        # dlg.show()
-        # while Gtk.events_pending():
-        #     Gtk.main_iteration()
-        # swipeData = None
-        # logger.debug("About to read card...")
-        # try:
-        #     swipeData = self.magtek.readCard(self.swipeCallback)
-        # except:
-        #     self._errDialog("Could not read your card.  Please try again.\n(Do not swipe card before clicking button.)", False)
-        # dlg.destroy()
-        # if swipeData is None:
-        #     logger.debug("swipeData = None, user probably cancelled...")
-        #     return
-        # logger.debug("Got some card data...")
-        # track2 = swipeData.getTrack(2)
-        # logger.debug("Track 2 data: %s", track2)
-        # if swipeData.getTrack(1) is not None and swipeData.getTrack(1).startswith("%B"):
-        #     self._errDialog("Sorry, you can't pay for printing with a credit or debit card.\n\nBut thanks for the credit card number, it'll come in handy!\n\n(just kidding about that last part)", False)
-        #     return
-        # if track2 is None:
-        #     self._errDialog("Couldn't read your card.  Please try again.\n\nIf your ID is old or your magnetic stripe is worn\nor damaged, you may need a replacement card.", False)
-        #     return
-        # if swipeData.getTrack(3) is None or swipeData.getTrack(1):
-        #     if not self._askQuestion("That doesn't look like an MIT ID card.  Try to continue anyway?"):
-        #         return
-
-        # username = None
-        # logger.debug("Looking up card...")
-        # try:
-        #     self._ensureConnection()
-        #     username = self.omega.getUsernameFromCard(track2)
-        # except omega.PharosEDIException as e:
-        #     self._errDialog(e.message, False)
-        #     return
-        # if len(username) > 0:
-        #     self.displayJobList(username)
-        # else:
-        #     self._errDialog("Error: ", False)
-       
 
     def cbUserActivate(self, widget):
         # Move focus to password field if user hits "Enter"
@@ -263,10 +233,9 @@ class ReleaseStation:
         krbauth = auth_krb5.Authenticator('pharos-release-station')
         if krbauth.authenticate(uname, password):
             logger.debug("Got username: %s", uname)
-            self._acceptSwipes = False
             if uname:
-                self._ensureConnection()
-                self.displayJobList(uname)
+                self._currentUser = uname
+                self.displayJobList()
         else:
             self._errDialog("Error: %s" % krbauth.error, False)
 
@@ -291,34 +260,63 @@ class ReleaseStation:
         logger.debug("Destroyed _errDialog")
 
     def _pulseBar(self):
-        self.builder.get_object("queueProgress").pulse()
+        logger.debug('Pulsing queue progress bar')
+        self.queueProgress('pulse')
         while Gtk.events_pending():
             Gtk.main_iteration()
 
-    def displayJobList(self, username):
-        self.username = username
+    def loginProgress(self, op='hide'):
+        if op == 'hide':
+            self.builder.get_object("loginProgress").hide()
+        elif op == 'pulse':
+            self.builder.get_object("loginProgress").show()
+            self.builder.get_object("loginProgress").pulse()
+        else:
+            logger.warning("Unknown progress bar operation '%s'", op)
+
+    def queueProgress(self, op='hide'):
+        if op == 'hide':
+            self.builder.get_object("queueProgress").hide()
+        elif op == 'pulse':
+            self.builder.get_object("queueProgress").show()
+            self.builder.get_object("queueProgress").pulse()
+        else:
+            logger.warning("Unknown progress bar operation '%s'", op)
+
+    def displayJobList(self):
+        if self._currentUser is None:
+            raise ReleaseStationInternalError("_currentUser is None in displayJobList()")
+        self._ensureConnection()
         self.builder.get_object("nbMain").set_current_page(1)
-        self.builder.get_object("queueProgress").show()
-        self._pulseBar()
+        while Gtk.events_pending():
+            Gtk.main_iteration()
+        self.queueProgress('pulse')
         logger.debug("Calling getUserDetails")
         try:
-            details = self.omega.getUserDetails(username)
+            details = self.omega.getUserDetails(self._currentUser)
         except omega.PharosEDIException as e:
-            logger.error("getUserDetails threw exception: %s", e.message)
-            self.builder.get_object("queueProgress").hide()
+            logger.info("getUserDetails threw exception: %s", e.message)
             # Ugh
             self._errDialog(e.message, not ("user is locked" in e.message))
-            self.cbExit(None)
+            self.returnToLogin()
             return
-        self.builder.get_object("lblWelcome").set_text("User: %s     Quota Balance: %d pages" % (username, int(details.balance * 10)))
+        localdetails = omega_site.Details(details)
+        if not localdetails.isActive():
+            self._errDialog("Your Pharos account is flagged as inactive.  The most common cause of this is a change in your affiliation, such as graduating.  Contact the TechCash office and request that your Pharos account be re-activated.", False)
+            self.returnToLogin()
+            return
+        self.builder.get_object("lblUsername").set_text(self._currentUser)
+        self.builder.get_object("lblBalance").set_text("%d pages" % localdetails.getPageBalance())
+        self.builder.get_object("lblSoftQuota").set_text("Yes" if localdetails.canExceedQuota() else "No")
+        self.builder.get_object("lblPrintingPlan").set_text(localdetails.getAffiliation())
         self._pulseBar()
         logger.debug("Calling getPrintJobsForUser")
         try:
-            jobs = self.omega.getPrintJobsForUser(username, self._pulseBar)
+            jobs = self.omega.getPrintJobsForUser(self._currentUser, self._pulseBar)
         except omega.PharosEDIException as e:
             logger.error("getPrintJobsForUser threw exception: %s", e.message)
             self._errDialog("Error while retrieving print jobs: " + e.message)
-            self.cbExit(None)
+            self.returnToLogin()
             return
         logger.debug("Found %d jobs", len(jobs))
         self.jobobjs = {}
@@ -336,7 +334,7 @@ class ReleaseStation:
                 self.jobListStore.append((j.job_id, j.username, j.formattedDate("%b %m %H:%M"), j.pages, j.jobname))
             # Select the first job, emulate the Omegas
             self.builder.get_object("treeviewPrintJobs").get_selection().select_iter(self.jobListStore.get_iter_first())
-        self.builder.get_object("queueProgress").hide()
+        self.queueProgress('hide')
 
     def _getSelectedJob(self):
         tree = self.builder.get_object("treeviewPrintJobs")
@@ -360,7 +358,7 @@ class ReleaseStation:
     def cbPrint(self, widget):
         job = self._getSelectedJob()
         self._releaseJob(job)
-        self.displayJobList(self.username)
+        self.displayJobList()
 
     def _releaseJob(self, jobid):
         if jobid is not None and jobid in self.jobobjs:
@@ -375,7 +373,7 @@ class ReleaseStation:
             print >>sys.stderr, self.jobobjs
             for k in self.jobobjs:
                 self._releaseJob(k)
-        self.displayJobList(self.username)
+        self.displayJobList()
 
     def cbDelete(self, widget):
         job = self._getSelectedJob()
@@ -384,15 +382,7 @@ class ReleaseStation:
                 self.omega.deleteJob(job, self.jobobjs[job].queue)
             except omega.PharosEDIException(e):
                 self._errDialog("Error while deleting job:\n%s" % (e.message))
-        self.displayJobList(self.username)
-
-
-    def swipeCallback2(self):
-        logger.debug("swipeCallback2")
-        while Gtk.events_pending():
-            logger.debug("Calling main_iteration() 2")
-            Gtk.main_iteration()
-        return True
+        self.displayJobList()
 
     def checkForSwipe(self, swipeData=None):
         track2 = swipeData.getTrack(2)
@@ -415,40 +405,43 @@ class ReleaseStation:
         except omega.PharosEDIException as e:
             self._errDialog(e.message, False)
         if len(username) > 0:
-            self.displayJobList(username)
+            self._currentUser = username
+            self.displayJobList()
         else:
-            self._errDialog("Error: ", False)
+            logger.warn("Got username (%s), shouldn't happen", username)
 
     def _excepthook(self, type, value, tb):
-        if type is KeyboardInterrupt:
-            return
-        print >>sys.stderr, "Unhandled exception:\n%s\n" % ''.join(traceback.format_exception(type, value, tb))
+        logger.critical("UNHANDLED EXCEPTION:\n%s\n", ''.join(traceback.format_exception(type, value, tb)))
         dlg = Gtk.MessageDialog(self.winMain,
                                 Gtk.DialogFlags.DESTROY_WITH_PARENT,
                                 Gtk.MessageType.ERROR,
                                 Gtk.ButtonsType.CLOSE,
-                                "An unhandled exception occurred.  Consult the logs for more details.\nThe program will now quit.\n")
+                                "An unexpected error occurred. Consult the logs for more details.\nThe program will now quit.\n")
         dlg.run()
         dlg.destroy()
+        self.quitApp()
         sys.exit(1)
 
-class cardReaderThread(threading.Thread):
-    stopEvent = threading.Event()
+class CardReaderThread(threading.Thread):
+    stop_event = threading.Event()
 
-    def __init__(self, reader=None, consumerObj=None):
-        super(cardReaderThread, self).__init__(None, None, 'CardReaderThread')
-        self.consumerObj = consumerObj
+    def __init__(self, reader=None, consumer_object=None):
+        super(CardReaderThread, self).__init__(None, None, 'CardReaderThread')
+        self.consumer_object = consumer_object
         self.reader = reader
-        self.logger = logging.getLogger(LOGGER_NAME).getChild("cardReaderThread")
+        self.logger = logging.getLogger(LOGGER_NAME).getChild("CardReaderThread")
 
     # A callback to stop the blocking loop in readCard
-    def _readerCallback(self):
-        self.logger.debug("_readerCallback")
-        return not self.stopEvent.isSet()
+    def _readerCallback(self, dataLen=0):
+        self.logger.debug("_readerCallback: %d", dataLen)
+        if dataLen > 0:
+            Gdk.threads_add_idle(GLib.PRIORITY_DEFAULT, 
+                                 self.consumer_object.loginProgress, 'pulse')
+        return not self.stop_event.isSet()
 
     def run(self):
         self.logger.debug("Starting thread")
-        while not self.stopEvent.isSet():
+        while not self.stop_event.isSet():
             swipeData = None
             try:
                 self.logger.debug("Calling readCard...")
@@ -459,15 +452,18 @@ class cardReaderThread(threading.Thread):
                 self.logger.debug("swipeData = None, user probably cancelled...")
             else:
                 self.logger.debug("Got swipe data")
-                if self.consumerObj is not None:
+                if self.consumer_object is not None:
                     # Add an idle callback.  Doing this any other way will block the UI.
-                    Gdk.threads_add_idle(GLib.PRIORITY_DEFAULT, self.consumerObj.checkForSwipe, swipeData)
+                    Gdk.threads_add_idle(GLib.PRIORITY_DEFAULT, 
+                                         self.consumer_object.loginProgress, 'hide')
+                    Gdk.threads_add_idle(GLib.PRIORITY_DEFAULT, 
+                                         self.consumer_object.checkForSwipe, swipeData)
                     self.logger.debug("idle thread callback added")
                 else:
-                    logger.warn("consumerObj is None, cannot notify")
+                    logger.warn("consumer_object is None, cannot notify")
 
     def stop(self):
-        self.stopEvent.set()
+        self.stop_event.set()
 
 if __name__ == '__main__':
     # Parse command line options
@@ -499,7 +495,7 @@ if __name__ == '__main__':
     main_loop = GLib.MainLoop()
     try:
         alpha = ReleaseStation(options, config, main_loop.quit)
-        cardReader = cardReaderThread(alpha.magtek, alpha)
+        cardReader = CardReaderThread(alpha.magtek, alpha)
         alpha.threads.append(cardReader)
         cardReader.start()
         sys.excepthook = alpha._excepthook
@@ -514,5 +510,5 @@ if __name__ == '__main__':
         logger.debug("Threads stopped.  Quitting main_loop")
         main_loop.quit()
     except Exception as e:
-        print >> sys.stderr, "A fatal error occurred while running the main loop", e
+        logger.critical("A fatal error occured while running the main loop: %s", str(e))
         

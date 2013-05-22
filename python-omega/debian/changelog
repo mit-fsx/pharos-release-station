@@ -1,3 +1,9 @@
+python-omega (1.2) unstable; urgency=low
+
+  * Add omega_site module for local hacks
+
+ -- Jonathan Reed <jdreed@mit.edu>  Wed, 22 May 2013 14:37:20 -0400
+
 python-omega (1.1) unstable; urgency=low
 
   * Packaging fixes
