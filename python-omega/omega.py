@@ -32,7 +32,11 @@ class PharosEDIException(OmegaException):
     # TODO: Get Pharos to fix the stupid script
     _noUserFound = "Script 'Alternative-Offline and Lock Fix': error after line 115: No user found matching: "
 
+    EGENERIC = 0
+    ENOSUCHUSER = 1
+
     def __init__(self, webFaultException):
+        self.errCode = self.EGENERIC
         if webFaultException is not None:
             if not isinstance(webFaultException, WebFault):
                 raise OmegaException('PharosEDIException arguments must be of type WebFault')
@@ -42,6 +46,7 @@ class PharosEDIException(OmegaException):
                 self.message = self._fault.faultstring.replace("An internal server error occurred. ", "", 1)
                 if self._noUserFound in self.message:
                     self.message = "User not found in Pharos database."
+                    self.errCode = ENOSUCHUSER
     
     def __repr__(self):
         return "%s: %s" % (self.__class__, self.message)

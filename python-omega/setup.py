@@ -9,5 +9,5 @@ setup(
     author="Jonathan Reed",
     author_email="jdreed@mit.edu",
     license="GPL2",
-    py_modules=['omega'],
+    py_modules=['omega', 'omega_site'],
 )
