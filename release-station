@@ -19,6 +19,7 @@ import ConfigParser, io
 
 import sys, os.path, time, traceback
 import logging
+import logging.handlers
 import threading
 
 # Local modules as separate packages
@@ -49,8 +50,8 @@ class ReleaseStation:
             self.builder.add_from_file(options.ui_file)
             logger.debug("Builder UI loaded")
         except GLib.GError, e:
-            print >> sys.stderr, "FATAL: Unable to load UI: ", e
-            sys.exit(-1)
+            logger.exception("Unable to load UI:")
+            sys.exit(1)
         
         # Gtk signal handlers
         handlers = {
@@ -74,8 +75,7 @@ class ReleaseStation:
         try:
             pixbuf = GdkPixbuf.Pixbuf.new_from_file(config.get('ReleaseStation', 'logo_image_file'))
         except GLib.GError as e:
-            
-            self._errDialog("Failed to load image file %s" % config.get('ReleaseStation', 'logo_image_file'), False)
+            logger.exception("Failed to load image file")
             pixbuf = GdkPixbuf.Pixbuf.new(GdkPixbuf.Colorspace.RGB, False, 8, 10, 10)
         self.builder.get_object("imgLogo").set_from_pixbuf(pixbuf)
         try:
@@ -97,8 +97,7 @@ class ReleaseStation:
         try:
             self.magtek = magtek.MagTek()
         except magtek.MagTekException as e:
-            if e.type != magtek.MagTekException.NO_READER:
-                logger.warn("Error while initializing MagTek module: %s", e.message)
+            logger.warn("Error while initializing MagTek module: %s", e.message)
 
         # Omega connection
         try:
@@ -107,17 +106,15 @@ class ReleaseStation:
             self.omega.start_session(config.get('ReleaseStation', 'omega_name'),
                                      config.get('ReleaseStation', 'site_password'))
         except omega.OmegaException as e:
-            self._errDialog("An error occurred while starting up: %s" % e.message, False)
+            logger.exception("An error occurred while connecting to Pharos")
             sys.exit(1)
         self.jobListStore = self.builder.get_object("jobList")
         self.jobListStore.clear()
-        if self.magtek is None or self.magtek.getInterfaceType() != magtek.MagTek.INTERFACE_TYPE_HID:
-            if self.magtek is None:
-                self._errDialog("Card reader not found.  Card swiping disabled.", False)
-            else:
-                self._errDialog("Card reader present, but not in HID mode.  Card swiping disabled.", False)
-            self.builder.get_object("btnSwipe").set_sensitive(False)
-            self.builder.get_object("btnSwipe").set_label("(card reader unavailable)")
+        if self.magtek is None:
+            logger.warning("Card reader not found.  Card swiping will be disabled.")
+        elif self.magtek.getInterfaceType() != magtek.MagTek.INTERFACE_TYPE_HID:
+            logger.warning("Card reader not in HID mode.  Swiping will be disabled.")
+            self.magtek = None
         self.builder.get_object("treeviewPrintJobs").get_selection().connect("changed", self._selectionChanged)
 
     def _ensureConnection(self):
@@ -440,12 +437,20 @@ class CardReaderThread(threading.Thread):
         return not self.stop_event.isSet()
 
     def run(self):
-        self.logger.debug("Starting thread")
+        self.logger.debug("Starting card reader thread")
         while not self.stop_event.isSet():
+            if self.reader is None:
+                self.logger.debug("No reader found")
+                self.stop()
+                continue
             swipeData = None
             try:
                 self.logger.debug("Calling readCard...")
                 swipeData = self.reader.readCard(True, self._readerCallback)
+            except magtek.MagTekException as e:
+                logger.exception("Exception while reading card")
+                self.consumer_object.quitApp()
+                sys.exit(128)
             except Exception as e:
                 self.logger.warning("Exception while reading card data: %s", e)
             if swipeData is None:
@@ -463,9 +468,16 @@ class CardReaderThread(threading.Thread):
                     logger.warn("consumer_object is None, cannot notify")
 
     def stop(self):
+        logger.debug("Stopping thread.")
         self.stop_event.set()
 
 if __name__ == '__main__':
+    # Initialize logging
+    log_handler = logging.StreamHandler()
+    log_handler.setFormatter(
+        logging.Formatter('%(asctime)s:%(levelname)s:%(message)s'))
+    log_handler.setLevel(logging.WARNING)
+    logger.addHandler(log_handler)
     # Parse command line options
     parser = OptionParser()
     parser.set_defaults(debug=False)
@@ -475,13 +487,15 @@ if __name__ == '__main__':
     parser.add_option("--cfg", action="store", type="string",
                       default=CONFIG_FILE, dest="config_file")
     (options, args) = parser.parse_args()
-    # Initialize logging
-    logging.basicConfig(level=logging.ERROR)
     if options.debug:
         logger.setLevel(logging.DEBUG)
+        debug_handler = logging.StreamHandler()
+        debug_handler.setFormatter(
+            logging.Formatter('%(levelname)s:%(message)s'))
+        logger.addHandler(debug_handler)
     # Parse config file
     if not os.path.isfile(options.config_file):
-        print >>sys.stderr, "Config file %s not found" % options.config_file
+        logger.error("Config file %s not found", options.config_file)
         sys.exit(1)
     config = ConfigParser.RawConfigParser(CONFIG_DEFAULTS)
     config.readfp(io.BytesIO("[ReleaseStation]\n"))
@@ -500,15 +514,14 @@ if __name__ == '__main__':
         cardReader.start()
         sys.excepthook = alpha._excepthook
     except Exception as e:
-        print >> sys.stderr, "Unexpected error while starting application", e.message
+        logger.exception("Unexpected error while starting application")
     try:
         main_loop.run()
     except KeyboardInterrupt:
         logger.debug("KeyboardInterrupt received, shutting down...")
-        # TODO, don't quit
         cardReader.stop()
         logger.debug("Threads stopped.  Quitting main_loop")
         main_loop.quit()
     except Exception as e:
-        logger.critical("A fatal error occured while running the main loop: %s", str(e))
+        logger.exception("A fatal error occurred while runing the main loop.")
         
