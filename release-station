@@ -235,6 +235,7 @@ class ReleaseStation:
                 self.displayJobList()
         else:
             self._errDialog("Error: %s" % krbauth.error, False)
+            self.resetLoginScreen()
 
     def _errDialog(self, message, verbose=True):
         msg = message
