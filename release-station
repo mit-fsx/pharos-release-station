@@ -116,6 +116,10 @@ class ReleaseStation:
             logger.warning("Card reader not in HID mode.  Swiping will be disabled.")
             self.magtek = None
         self.builder.get_object("treeviewPrintJobs").get_selection().connect("changed", self._selectionChanged)
+        if self.magtek is None:
+            self.builder.get_object("lblOr").set_visible(False)
+            self.builder.get_object("frmSwipe").set_visible(False)
+
 
     def _ensureConnection(self):
         try:
