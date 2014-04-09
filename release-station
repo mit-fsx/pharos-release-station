@@ -108,6 +108,8 @@ class ReleaseStation:
         except omega.OmegaException as e:
             logger.exception("An error occurred while connecting to Pharos")
             sys.exit(1)
+        self.builder.get_object("lblTerminalName").set_text("Terminal: " + config.get('ReleaseStation', 'omega_name'))
+        self.builder.get_object("lblPrinterName").set_text("Printer: " + self.omega.printer)
         self.jobListStore = self.builder.get_object("jobList")
         self.jobListStore.clear()
         if self.magtek is None:
