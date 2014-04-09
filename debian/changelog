@@ -1,3 +1,9 @@
+pharos-release-station (1.2.2) unstable; urgency=low
+
+  * Fix some display bugs; add better logging
+
+ -- Jonathan Reed <jdreed@mit.edu>  Wed, 09 Apr 2014 11:00:12 -0400
+
 pharos-release-station (1.2.1) unstable; urgency=low
 
   * Fix release-station-session to correctly save $?
