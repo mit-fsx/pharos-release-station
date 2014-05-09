@@ -77,6 +77,13 @@ class PharosPrintJob:
         if xmlElementTree is not None:
             self.__dict__.update(dict((x, xmlElementTree.find(x).text) for x in self._basicAttrs))
 
+    def __repr__(self):
+        return "%s(%s, %s, %s, %s, %s)" % (self.__class__.__name__,
+                                           self.queue, self.job_id,
+                                           self.username,
+                                           self.when_submitted,
+                                           self.jobname)
+
     def setDetails(self, details):
         self.__dict__.update(dict((x, details[x] if x in details else None) for x in self._extAttrs))
 
