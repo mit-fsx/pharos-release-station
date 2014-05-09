@@ -208,6 +208,31 @@ class Omega:
             raise PharosEDIException(e)
         return details
 
+    def getAllPrintJobs(self, queue, username='', want_details=False):
+        try:
+            jobs = self.soapClient.service.ListPrintJobs(self.print_server,
+                                                         queue, username)
+        except WebFault as e:
+            raise PharosEDIException(e)
+        # TODO: Better Unicode support.
+        jobsxml = ElementTree.XML(unicode(jobs).encode('ascii',
+                                                       errors='ignore'))
+        jobslist = []
+        for job in jobsxml.findall('print_job'):
+            printjob = PharosPrintJob(job)
+            if want_details:
+                try:
+                    details = self.soapClient.service.GetPrintJobDetails(
+                        self.print_server,
+                        printjob.queue,
+                        printjob.job_id,
+                        printjob.username)
+                    printjob.setDetails(details)
+                except WebFault as e:
+                    pass
+            jobslist.append(printjob)
+        return jobslist
+
     def getPrintJobsForUser(self, username, objToUpdate=None):
         # WARNING: IT IS THE CALLERS RESPONSIBILITY TO AUTHENTICATE THE USER
         try:
